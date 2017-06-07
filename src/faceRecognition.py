@@ -2,9 +2,11 @@
 import math
 import numpy as np
 import cv2
+import os
 
 import tensorflow as tf
 import facenet
+from scipy import misc
 
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
@@ -14,7 +16,7 @@ class FaceRecognition(object):
     def __init__(self, recognition_model, gpu_memory_fraction=0):
         self.gpu_memory_fraction = gpu_memory_fraction
         self.image_size = 160
-        self.batch_size = 50
+        self.batch_size = 100
 
         self.recognition_model = recognition_model
 
@@ -179,28 +181,49 @@ class FaceRecognition(object):
             face_class_prob.append([self.class_names[best_class_indices[i]], best_class_probabilities[i]])
         return face_class_prob
 
+    def process_images(self, image_data_folder, save_image_folder):
+        image_list = os.listdir(image_data_folder)
+        paths = [image_data_folder+image for image in image_list if image != '.DS_Store']
+        nrof_images = len(paths)
+        print('nrof_images: ', nrof_images)
+        nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / self.batch_size))
+        for i in range(nrof_batches_per_epoch):
+            start_index = i * self.batch_size
+            end_index = min((i + 1) * self.batch_size, nrof_images)
+            paths_batch = paths[start_index:end_index]
+            # print('paths_batch: ', paths_batch)
+            whiten_images = facenet.load_data(paths_batch, False, False, self.image_size, do_prewhiten=True)
+
+            tmp_embeddings = self.calculate_embeddings(whiten_images)   # calculate image feature (embedding)
+            face_class_prob = self.recognize_face_knn(tmp_embeddings)   # use knn classifier
+
+            images = facenet.load_data(paths_batch, False, False, self.image_size, do_prewhiten=False)
+            for idx, class_prob in enumerate(face_class_prob):
+                save_image_class_folder = save_image_folder + '/{}/'.format(class_prob[0])
+                if not os.path.exists(save_image_class_folder):
+                    os.makedirs(save_image_class_folder)
+                save_image_path = save_image_class_folder + '/{}_{}.png'.format(i, idx)
+                # print('save_image_path: ', save_image_path)
+                misc.imsave(save_image_path, images[idx])
+        return
 
 if __name__ == '__main__':
-    face_data_folder = '../../data/faceData/'
-    recognition_model = '../../data/models/recognition/20170512-110547/20170512-110547.pb'
-    faceRecognition = FaceRecognition(face_data_folder, recognition_model)
+    kindergarten_id = '000000'
+    # kindergarten_id = '000003'
 
-    imgPath = '../../data/test/60_2.png'
-    image = cv2.imread(imgPath)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    print('image.shape: ', image.shape)
+    # set up the facenet model for recognition
+    face_data_folder = '../data/faceData/{}/'.format(kindergarten_id)
+    recognition_model = '../data/model/20170512-110547.pb'
+    faceRecognition = FaceRecognition(recognition_model)
+    faceRecognition.update_model_data(face_data_folder)
 
-    print('len(face_data): ', len(faceRecognition.face_data))
-    print('len(labels): ', len(faceRecognition.labels))
-    print('class_names): ', len(faceRecognition.class_names))
-    print('face_embeddings.shape: ', faceRecognition.face_embeddings.shape)
+    # the folder of images to be recognized
+    detected_image_folder = '../data/detectionData/{}/'.format(kindergarten_id)
+    # the folder of images saved based on recognized result
+    save_image_folder = '../data/recognitionData/{}/'.format(kindergarten_id)
+    if not os.path.exists(save_image_folder):
+        os.makedirs(save_image_folder)
 
-    imageList = np.array([image])
-
-    tmp_embeddings = faceRecognition.calculate_embeddings(imageList)
-    print('tmp_embbedings.shape: ', tmp_embeddings.shape)
-    print('svm: ', faceRecognition.recognize_face_svm(tmp_embeddings))
-    print('knn: ', faceRecognition.recognize_face_knn(tmp_embeddings))
-
-
+    # process the images
+    faceRecognition.process_images(detected_image_folder, save_image_folder)
 
